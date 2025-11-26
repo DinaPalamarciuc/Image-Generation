@@ -118,12 +118,18 @@ if st.button("Analizează imaginea", type="primary"):
         result = analyze_image(client, img, instruction)
 
     st.success("Gata!")
+st.markdown("### Descriere")
+st.write(result.get("description", ""))
 
-    st.markdown("### Descriere")
-    st.write(result.get("description", ""))
+st.markdown("### Cuvinte cheie")
+for kw in result.get("seoKeywords", []):
+    st.write("-", kw)
 
-    st.markdown("### Cuvinte cheie")
-    for kw in result.get("seoKeywords", []):
-        st.write("-", kw)
+st.markdown("### Prompt generare imagine")
+st.text_area("Prompt", result.get("suggestedPrompt", ""), height=250)
 
-    st.markdown("
+st.markdown("### Analiză personalizată")
+st.write(result.get("customAnalysis", ""))
+
+st.markdown("### JSON complet")
+st.code(json.dumps(result, indent=2, ensure_ascii=False), language="json")
