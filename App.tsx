@@ -125,6 +125,26 @@ export default function App() {
     }
   };
 
+  const resetApp = () => {
+    setMode('analyze');
+    setAnalysisImage(null);
+    setAnalysisInstruction('');
+    setAnalysisResult(null);
+    
+    setGenerationPrompt('');
+    setGeneratedImage(null);
+    setEnhancementResult(null);
+    
+    setRemixSourceImage(null);
+    setRemixPrompt('');
+    setRemixedImage(null);
+    setIsEditingRemixSource(false);
+    
+    setError(null);
+    setIs403Error(false);
+    setLoading({ isLoading: false, message: '' });
+  };
+
   const handleAnalysis = async () => {
     if (!analysisImage) return;
     setLoading({ isLoading: true, message: 'Analyzing image strategy with Gemini 3 Pro...' });
@@ -228,11 +248,14 @@ export default function App() {
       {/* Header */}
       <header className="sticky top-0 z-50 bg-slate-950/80 backdrop-blur-md border-b border-slate-800">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
+          <div 
+            onClick={resetApp}
+            className="flex items-center gap-2 cursor-pointer group"
+          >
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center group-hover:shadow-lg group-hover:shadow-indigo-500/50 transition-all">
               <Sparkles className="text-white w-5 h-5" />
             </div>
-            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 group-hover:to-white transition-all">
               Gemini Lens & Canvas
             </h1>
           </div>
