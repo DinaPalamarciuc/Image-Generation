@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Scan, 
   ImagePlus, 
@@ -16,14 +16,22 @@ import {
   XCircle,
   CreditCard,
   Edit,
-  SlidersHorizontal
+  SlidersHorizontal,
+  History as HistoryIcon,
+  Globe,
+  Search,
+  ExternalLink,
+  Undo2,
+  Redo2,
+  Package,
+  ArrowLeftRight
 } from 'lucide-react';
 import { Button } from './components/Button';
 import { AspectRatioSelector } from './components/AspectRatioSelector';
 import { ImageUpload } from './components/ImageUpload';
 import { ImageEditor } from './components/ImageEditor';
-import { analyzeImage, generateNewImage, remixImage, enhancePrompt, validateApiKey } from './services/geminiService';
-import { AppMode, AspectRatio, AnalysisResult, LoadingState, PromptEnhancementResult } from './types';
+import { analyzeImage, generateNewImage, remixImage, enhancePrompt, validateApiKey, getRemixSuggestions, searchVisualIdentity, analyzeProductAdaptation } from './services/geminiService';
+import { AppMode, AspectRatio, AnalysisResult, LoadingState, PromptEnhancementResult, RemixHistoryItem, SearchResult, AdaptationResult } from './types';
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>('analyze');
@@ -39,23 +47,68 @@ export default function App() {
   const [analysisImage, setAnalysisImage] = useState<string | null>(null);
   const [analysisInstruction, setAnalysisInstruction] = useState('');
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  // Search State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
+
+  // Product Studio State
+  const [productImage, setProductImage] = useState<string | null>(null);
+  const [referenceImage, setReferenceImage] = useState<string | null>(null);
+  const [adaptationResult, setAdaptationResult] = useState<AdaptationResult | null>(null);
 
   // Generation State
   const [generationPrompt, setGenerationPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [enhancementResult, setEnhancementResult] = useState<PromptEnhancementResult | null>(null);
+  
+  // Prompt History State
+  const [promptHistory, setPromptHistory] = useState<string[]>(['']);
+  const [promptHistoryIndex, setPromptHistoryIndex] = useState(0);
 
   // Remix State
   const [remixSourceImage, setRemixSourceImage] = useState<string | null>(null);
   const [remixPrompt, setRemixPrompt] = useState('');
   const [remixedImage, setRemixedImage] = useState<string | null>(null);
   const [isEditingRemixSource, setIsEditingRemixSource] = useState(false);
+  const [remixSuggestions, setRemixSuggestions] = useState<string[]>([]);
+  const [remixHistory, setRemixHistory] = useState<RemixHistoryItem[]>([]);
 
   useEffect(() => {
     localStorage.setItem('gemini_api_key', apiKey);
     setKeyValidationStatus('idle');
   }, [apiKey]);
+
+  // Debounced Prompt History Tracking
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // If prompt is different from current history head, add to history
+      if (generationPrompt !== promptHistory[promptHistoryIndex]) {
+        const newHistory = promptHistory.slice(0, promptHistoryIndex + 1);
+        newHistory.push(generationPrompt);
+        setPromptHistory(newHistory);
+        setPromptHistoryIndex(newHistory.length - 1);
+      }
+    }, 800); // 800ms debounce
+
+    return () => clearTimeout(timer);
+  }, [generationPrompt, promptHistory, promptHistoryIndex]);
+
+  const handleUndoPrompt = () => {
+    if (promptHistoryIndex > 0) {
+      const newIndex = promptHistoryIndex - 1;
+      setPromptHistoryIndex(newIndex);
+      setGenerationPrompt(promptHistory[newIndex]);
+    }
+  };
+
+  const handleRedoPrompt = () => {
+    if (promptHistoryIndex < promptHistory.length - 1) {
+      const newIndex = promptHistoryIndex + 1;
+      setPromptHistoryIndex(newIndex);
+      setGenerationPrompt(promptHistory[newIndex]);
+    }
+  };
 
   const parseError = (err: any): string => {
     let message = err instanceof Error ? err.message : String(err);
@@ -130,15 +183,25 @@ export default function App() {
     setAnalysisImage(null);
     setAnalysisInstruction('');
     setAnalysisResult(null);
+    setSearchQuery('');
+    setSearchResult(null);
     
+    setProductImage(null);
+    setReferenceImage(null);
+    setAdaptationResult(null);
+
     setGenerationPrompt('');
     setGeneratedImage(null);
     setEnhancementResult(null);
+    setPromptHistory(['']);
+    setPromptHistoryIndex(0);
     
     setRemixSourceImage(null);
     setRemixPrompt('');
     setRemixedImage(null);
     setIsEditingRemixSource(false);
+    setRemixSuggestions([]);
+    setRemixHistory([]);
     
     setError(null);
     setIs403Error(false);
@@ -158,6 +221,40 @@ export default function App() {
     } finally {
       setLoading({ isLoading: false, message: '' });
     }
+  };
+
+  const handleProductAdaptation = async () => {
+    if (!productImage || !referenceImage) return;
+    setLoading({ isLoading: true, message: 'Fusing product and style with Gemini 3 Pro...' });
+    setError(null);
+    try {
+      const result = await analyzeProductAdaptation(productImage, referenceImage, apiKey);
+      setAdaptationResult(result);
+    } catch (err) {
+      handleError(err, 'Failed to adapt product');
+    } finally {
+      setLoading({ isLoading: false, message: '' });
+    }
+  };
+
+  const handleWebSearch = async () => {
+    if (!searchQuery) return;
+    setLoading({ isLoading: true, message: 'Researching visual identity...' });
+    setError(null);
+    try {
+      const result = await searchVisualIdentity(searchQuery, apiKey);
+      setSearchResult(result);
+    } catch (err) {
+      handleError(err, 'Failed to search web');
+    } finally {
+      setLoading({ isLoading: false, message: '' });
+    }
+  };
+
+  const applySearchToStrategy = () => {
+    if (!searchResult) return;
+    const newContext = `Based on research for "${searchQuery}":\n${searchResult.summary}\n\nApply these visual cues to the adaptation.`;
+    setAnalysisInstruction(prev => prev ? `${prev}\n\n${newContext}` : newContext);
   };
 
   const handleEnhancePrompt = async () => {
@@ -205,6 +302,15 @@ export default function App() {
     try {
       const result = await remixImage(remixSourceImage, remixPrompt, apiKey);
       setRemixedImage(result);
+      
+      // Add to history
+      setRemixHistory(prev => [...prev, { image: result, prompt: remixPrompt, timestamp: Date.now() }]);
+      
+      // Get next step suggestions
+      setLoading({ isLoading: true, message: 'Thinking of next steps...' });
+      const suggestions = await getRemixSuggestions(result, apiKey);
+      setRemixSuggestions(suggestions);
+
     } catch (err) {
       handleError(err, 'Failed to remix image');
     } finally {
@@ -217,9 +323,10 @@ export default function App() {
     setIsEditingRemixSource(false);
   };
 
-  const transferPromptToGenerator = () => {
-    if (analysisResult?.suggestedPrompt) {
-      setGenerationPrompt(analysisResult.suggestedPrompt);
+  const transferPromptToGenerator = (prompt?: string) => {
+    const p = prompt || analysisResult?.suggestedPrompt;
+    if (p) {
+      setGenerationPrompt(p);
       setMode('generate');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -230,8 +337,25 @@ export default function App() {
     setRemixSourceImage(image);
     setRemixPrompt(''); // Reset prompt for fresh edits
     setRemixedImage(null); // Clear previous remix result if any
+    setRemixSuggestions([]); // Clear suggestions
     setMode('remix');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  
+  const handleRestoreFromHistory = (item: RemixHistoryItem) => {
+    setRemixSourceImage(item.image);
+    setRemixedImage(null);
+    setRemixPrompt('');
+    setRemixSuggestions([]);
+  };
+
+  const handleApplySuggestion = (suggestion: string) => {
+    if (remixedImage) {
+        // If we have a result, move it to source first to continue the chain
+        setRemixSourceImage(remixedImage);
+        setRemixedImage(null);
+    }
+    setRemixPrompt(suggestion);
   };
 
   const downloadImage = (dataUrl: string, filename: string) => {
@@ -255,13 +379,14 @@ export default function App() {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center group-hover:shadow-lg group-hover:shadow-indigo-500/50 transition-all">
               <Sparkles className="text-white w-5 h-5" />
             </div>
-            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 group-hover:to-white transition-all">
+            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 group-hover:to-white transition-all hidden sm:block">
               Gemini Lens & Canvas
             </h1>
           </div>
-          <div className="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
+          <div className="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 overflow-x-auto no-scrollbar">
             {[
               { id: 'analyze', label: 'Analyze', icon: Scan },
+              { id: 'product', label: 'Product Studio', icon: Package },
               { id: 'remix', label: 'Remix', icon: Wand2 },
               { id: 'generate', label: 'Generate', icon: ImagePlus },
             ].map((tab) => (
@@ -269,7 +394,7 @@ export default function App() {
                 key={tab.id}
                 onClick={() => setMode(tab.id as AppMode)}
                 className={`
-                  flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all
+                  flex items-center gap-2 px-3 sm:px-4 py-1.5 rounded-md text-sm font-medium transition-all whitespace-nowrap
                   ${mode === tab.id 
                     ? 'bg-slate-800 text-white shadow-sm' 
                     : 'text-slate-400 hover:text-slate-200'}
@@ -283,7 +408,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-8">
+      <main className="max-w-5xl mx-auto px-4 py-8">
         
         {/* Gemini API Key Input */}
         <div className="mb-8 bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col md:flex-row items-start md:items-center gap-5">
@@ -379,11 +504,11 @@ export default function App() {
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="text-center space-y-2 mb-8">
               <h2 className="text-3xl font-bold text-white">Competitor Analysis & Adaptation</h2>
-              <p className="text-slate-400">Analyze images, get SEO data, or adapt competitor concepts using <span className="text-indigo-400 font-mono">gemini-3-pro</span>.</p>
+              <p className="text-slate-400">Analyze images, search competitor info, and adapt concepts using <span className="text-indigo-400 font-mono">gemini-3-pro</span>.</p>
             </div>
 
             <div className="grid md:grid-cols-2 gap-8">
-              <div className="space-y-4">
+              <div className="space-y-6">
                 <ImageUpload 
                   currentImage={analysisImage} 
                   onImageSelected={setAnalysisImage}
@@ -401,8 +526,65 @@ export default function App() {
                   </Button>
                 )}
                 
+                {/* Search Integration */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+                   <div className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                     <Globe size={16} className="text-indigo-400" />
+                     Web Research (Optional)
+                   </div>
+                   <div className="flex gap-2">
+                     <div className="relative flex-1">
+                       <Search size={14} className="absolute left-3 top-3 text-slate-500" />
+                       <input 
+                          type="text" 
+                          placeholder='e.g., "Starbucks brand colors"' 
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm focus:ring-1 focus:ring-indigo-500 outline-none placeholder:text-slate-600"
+                        />
+                     </div>
+                     <Button 
+                       variant="secondary" 
+                       onClick={handleWebSearch}
+                       disabled={!searchQuery || loading.isLoading}
+                       className="!px-3 !py-2 h-auto text-xs"
+                     >
+                       Research
+                     </Button>
+                   </div>
+                   
+                   {searchResult && (
+                     <div className="bg-slate-950/50 rounded-lg p-3 text-xs border border-slate-700 space-y-2 animate-in fade-in">
+                       <p className="text-slate-300 leading-relaxed max-h-32 overflow-y-auto custom-scrollbar">
+                         {searchResult.summary}
+                       </p>
+                       <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-800/50">
+                          {searchResult.sources.map((src, i) => (
+                            <a 
+                              key={i} 
+                              href={src.uri} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="flex items-center gap-1 text-[10px] bg-slate-800 hover:bg-slate-700 text-indigo-300 px-1.5 py-0.5 rounded transition-colors"
+                            >
+                              <ExternalLink size={8} /> {src.title.slice(0, 15)}...
+                            </a>
+                          ))}
+                       </div>
+                       <Button 
+                         fullWidth 
+                         variant="ghost" 
+                         className="!py-1 !text-xs h-auto text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10"
+                         onClick={applySearchToStrategy}
+                       >
+                         <Copy size={10} className="mr-1.5" /> Use in Strategy
+                       </Button>
+                     </div>
+                   )}
+                </div>
+
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-300">Adaptation & Strategy (Optional)</label>
+                  <label className="text-sm font-medium text-slate-300">Adaptation & Strategy</label>
                   <textarea
                     value={analysisInstruction}
                     onChange={(e) => setAnalysisInstruction(e.target.value)}
@@ -471,10 +653,115 @@ export default function App() {
                       <Button 
                         fullWidth 
                         variant="primary"
-                        onClick={transferPromptToGenerator}
+                        onClick={() => transferPromptToGenerator(analysisResult.suggestedPrompt)}
                         className="group"
                       >
                          Create Adapted Image <ArrowRight size={16} className="ml-2 group-hover:translate-x-1 transition-transform" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PRODUCT STUDIO MODE */}
+        {mode === 'product' && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="text-center space-y-2 mb-8">
+              <h2 className="text-3xl font-bold text-white">Product Adaptation Studio</h2>
+              <p className="text-slate-400">Fuse your product into any competitor's style using multimodal reasoning.</p>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-8 items-start">
+              {/* Uploads Column */}
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-indigo-400 uppercase tracking-wider flex items-center gap-2">
+                      <Package size={14} /> My Product
+                    </label>
+                    <ImageUpload 
+                      currentImage={productImage} 
+                      onImageSelected={setProductImage}
+                      label="Your Product"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-2">
+                      <Scan size={14} /> Style Reference
+                    </label>
+                    <ImageUpload 
+                      currentImage={referenceImage} 
+                      onImageSelected={setReferenceImage}
+                      label="Competitor/Style"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center gap-4 text-sm text-slate-400">
+                  <div className="bg-slate-800 p-2 rounded-lg">
+                    <ArrowLeftRight size={20} className="text-slate-300" />
+                  </div>
+                  <p>
+                    Gemini will analyze the <span className="text-indigo-300">Product</span> and the <span className="text-amber-300">Reference Style</span> to create a unified prompt.
+                  </p>
+                </div>
+
+                <Button 
+                  fullWidth 
+                  onClick={handleProductAdaptation} 
+                  disabled={!productImage || !referenceImage || loading.isLoading}
+                >
+                  {loading.isLoading ? (
+                    <><Loader2 className="animate-spin mr-2" /> {loading.message}</>
+                  ) : (
+                    'Generate Adaptation Strategy'
+                  )}
+                </Button>
+              </div>
+
+              {/* Results Column */}
+              <div className="bg-slate-900 rounded-xl border border-slate-800 p-6 space-y-6 min-h-[400px]">
+                {!adaptationResult ? (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-4">
+                    <Lightbulb size={48} className="opacity-20" />
+                    <p>Upload both images to start adaptation.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                     <div className="bg-slate-950 p-4 rounded-lg border border-slate-800">
+                      <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-2 flex items-center gap-2">
+                        <Scan size={14} className="text-amber-400" /> Visual Analysis
+                      </h3>
+                      <p className="text-slate-400 text-sm leading-relaxed">{adaptationResult.analysis}</p>
+                    </div>
+
+                    <div className="bg-indigo-900/10 p-4 rounded-lg border border-indigo-500/20">
+                      <h3 className="text-sm font-semibold text-indigo-300 uppercase tracking-wider mb-2 flex items-center gap-2">
+                        <Lightbulb size={14} /> Adaptation Strategy
+                      </h3>
+                      <p className="text-slate-300 text-sm leading-relaxed">{adaptationResult.strategy}</p>
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-800">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                          <Sparkles size={14} className="text-indigo-400" /> 
+                          Fused Prompt
+                        </h3>
+                      </div>
+                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs text-slate-400 font-mono leading-relaxed mb-4">
+                        {adaptationResult.suggestedPrompt}
+                      </div>
+                      <Button 
+                        fullWidth 
+                        variant="primary"
+                        onClick={() => transferPromptToGenerator(adaptationResult.suggestedPrompt)}
+                        className="group"
+                      >
+                         Generate Adapted Image <ArrowRight size={16} className="ml-2 group-hover:translate-x-1 transition-transform" />
                       </Button>
                     </div>
                   </div>
@@ -530,6 +817,21 @@ export default function App() {
                         placeholder='e.g., "Make it a sunset scene", "Add a red hat", "Apply a cyberpunk filter"'
                         className="w-full h-32 bg-slate-900 border border-slate-700 rounded-xl p-4 text-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none placeholder:text-slate-600"
                       />
+                      
+                      {/* Suggestions Chips */}
+                      {remixSuggestions.length > 0 && (
+                        <div className="flex flex-wrap gap-2 pt-2 animate-in fade-in">
+                          {remixSuggestions.map((suggestion, idx) => (
+                             <button
+                               key={idx}
+                               onClick={() => handleApplySuggestion(suggestion)}
+                               className="text-xs bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 px-3 py-1.5 rounded-full transition-colors flex items-center gap-1.5"
+                             >
+                               <Sparkles size={10} /> {suggestion}
+                             </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <Button 
@@ -547,14 +849,14 @@ export default function App() {
                 )}
               </div>
 
-              <div className="bg-slate-900 rounded-xl border border-slate-800 p-2 flex items-center justify-center min-h-[400px]">
+              <div className="bg-slate-900 rounded-xl border border-slate-800 p-2 flex items-center justify-center min-h-[400px] flex-col gap-4">
                 {!remixedImage ? (
-                  <div className="text-slate-500 flex flex-col items-center">
+                  <div className="text-slate-500 flex flex-col items-center flex-1 justify-center">
                     <Wand2 size={48} className="opacity-20 mb-4" />
                     <p>Result will appear here</p>
                   </div>
                 ) : (
-                  <div className="relative w-full h-full group">
+                  <div className="relative w-full h-full group flex-1">
                     <img src={remixedImage} alt="Remixed" className="w-full h-full object-contain rounded-lg" />
                     <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-sm rounded-lg">
                       <Button onClick={() => downloadImage(remixedImage, 'remix.png')} variant="secondary">
@@ -563,6 +865,27 @@ export default function App() {
                       <Button onClick={() => handleTransferToRemix(remixedImage)} variant="primary">
                         <Wand2 size={18} className="mr-2" /> Continue Editing
                       </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Session History Strip */}
+                {remixHistory.length > 0 && (
+                  <div className="w-full border-t border-slate-800 pt-4 px-2">
+                    <div className="flex items-center gap-2 mb-2 text-xs text-slate-500 font-medium">
+                       <HistoryIcon size={12} /> Session History
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
+                      {remixHistory.map((item, index) => (
+                        <div 
+                          key={index} 
+                          onClick={() => handleRestoreFromHistory(item)}
+                          className="w-16 h-16 shrink-0 rounded-md border border-slate-700 overflow-hidden cursor-pointer hover:ring-2 hover:ring-indigo-500 transition-all opacity-70 hover:opacity-100"
+                          title={item.prompt}
+                        >
+                          <img src={item.image} alt="History" className="w-full h-full object-cover" />
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -587,13 +910,38 @@ export default function App() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-slate-300">Prompt</label>
-                    <button
-                      onClick={handleEnhancePrompt}
-                      disabled={!generationPrompt || loading.isLoading}
-                      className="text-xs flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <Sparkles size={12} /> Enhance Prompt
-                    </button>
+                    
+                    <div className="flex items-center gap-2">
+                      {/* Undo/Redo Buttons */}
+                      <div className="flex bg-slate-900 rounded-lg p-0.5 border border-slate-800">
+                        <button 
+                          onClick={handleUndoPrompt} 
+                          disabled={promptHistoryIndex === 0}
+                          className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+                          title="Undo"
+                        >
+                          <Undo2 size={14} />
+                        </button>
+                        <button 
+                          onClick={handleRedoPrompt} 
+                          disabled={promptHistoryIndex === promptHistory.length - 1}
+                          className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30 transition-colors"
+                          title="Redo"
+                        >
+                          <Redo2 size={14} />
+                        </button>
+                      </div>
+
+                      <div className="w-px h-4 bg-slate-800"></div>
+
+                      <button
+                        onClick={handleEnhancePrompt}
+                        disabled={!generationPrompt || loading.isLoading}
+                        className="text-xs flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Sparkles size={12} /> Enhance Prompt
+                      </button>
+                    </div>
                   </div>
                   
                   <textarea

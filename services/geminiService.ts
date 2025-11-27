@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { AspectRatio, AnalysisResult, PromptEnhancementResult } from "../types";
+import { AspectRatio, AnalysisResult, PromptEnhancementResult, SearchResult, AdaptationResult } from "../types";
 
 // Helper to get the AI client with the correct key
 const getAI = (apiKey?: string) => {
@@ -88,6 +88,66 @@ export const analyzeImage = async (base64Image: string, customInstruction?: stri
 };
 
 /**
+ * Analyzes a Product Image and a Reference Image to generate a blended prompt.
+ */
+export const analyzeProductAdaptation = async (productImage: string, referenceImage: string, apiKey?: string): Promise<AdaptationResult> => {
+  const ai = getAI(apiKey);
+  
+  const productMime = getMimeType(productImage);
+  const productData = cleanBase64(productImage);
+  
+  const refMime = getMimeType(referenceImage);
+  const refData = cleanBase64(referenceImage);
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-pro-preview',
+    contents: {
+      parts: [
+        { text: "Image 1: CLIENT PRODUCT (The object to feature)" },
+        {
+          inlineData: {
+            mimeType: productMime,
+            data: productData,
+          },
+        },
+        { text: "Image 2: REFERENCE STYLE / COMPETITOR (The vibe, layout, and composition to mimic)" },
+        {
+          inlineData: {
+            mimeType: refMime,
+            data: refData,
+          },
+        },
+        {
+          text: `You are a creative director. Your task is to adapt the visual strategy of the Reference Image to feature the Client Product.
+
+          1. Analyze the Reference Image: Extract the key "ideas" (lighting, color palette, composition, background elements, mood).
+          2. Analyze the Client Product: Identify what it is (e.g., perfume bottle, sneaker, watch).
+          3. Create a strategy: Explain how you will blend the product into the reference style.
+          4. Write a HIGHLY DETAILED image generation prompt. The prompt must describe a scene that LOOKS like the Reference Image (same style/vibe) but features the Client Product instead of the original subject.
+
+          Return JSON.`
+        }
+      ]
+    },
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          analysis: { type: Type.STRING, description: "Analysis of the reference style and product" },
+          strategy: { type: Type.STRING, description: "The plan for adaptation" },
+          suggestedPrompt: { type: Type.STRING, description: "The final image generation prompt" }
+        },
+        required: ["analysis", "strategy", "suggestedPrompt"]
+      }
+    }
+  });
+
+  const text = response.text || "{}";
+  return JSON.parse(text) as AdaptationResult;
+};
+
+/**
  * Enhances a user's prompt using gemini-2.5-flash.
  */
 export const enhancePrompt = async (currentPrompt: string, apiKey?: string): Promise<PromptEnhancementResult> => {
@@ -120,6 +180,56 @@ export const enhancePrompt = async (currentPrompt: string, apiKey?: string): Pro
 
   const text = response.text || "{}";
   return JSON.parse(text) as PromptEnhancementResult;
+};
+
+/**
+ * Performs a web search to gather visual identity information about a brand/competitor.
+ */
+export const searchVisualIdentity = async (query: string, apiKey?: string): Promise<SearchResult> => {
+  const ai = getAI(apiKey);
+  
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: {
+      parts: [{ 
+        text: `Search for the visual identity of '${query}'. 
+        Focus specifically on:
+        1. Official Brand Colors (Hex codes if possible).
+        2. Logo characteristics and style (minimalist, mascot, serif/sans-serif, etc).
+        3. Key visual themes or patterns used in their marketing.
+        
+        Provide a concise summary of these visual elements.` 
+      }]
+    },
+    config: {
+      tools: [{ googleSearch: {} }]
+    }
+  });
+
+  const text = response.text || "";
+  
+  // Extract sources from grounding metadata if available
+  const sources: { title: string; uri: string }[] = [];
+  const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+  
+  if (groundingChunks) {
+    groundingChunks.forEach((chunk: any) => {
+      if (chunk.web) {
+        sources.push({
+          title: chunk.web.title || "Source",
+          uri: chunk.web.uri
+        });
+      }
+    });
+  }
+
+  // Deduplicate sources by URI
+  const uniqueSources = Array.from(new Map(sources.map(item => [item.uri, item])).values()).slice(0, 3);
+
+  return {
+    summary: text,
+    sources: uniqueSources
+  };
 };
 
 /**
@@ -183,6 +293,46 @@ export const remixImage = async (base64Image: string, prompt: string, apiKey?: s
   }
 
   throw new Error("No remixed image returned.");
+};
+
+/**
+ * Gets smart suggestions for next steps based on the generated/remixed image.
+ */
+export const getRemixSuggestions = async (base64Image: string, apiKey?: string): Promise<string[]> => {
+  const ai = getAI(apiKey);
+  const mimeType = getMimeType(base64Image);
+  const data = cleanBase64(base64Image);
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: {
+      parts: [
+        {
+          inlineData: {
+            mimeType: mimeType,
+            data: data,
+          },
+        },
+        {
+          text: "Suggest 3 creative, short, and actionable follow-up prompts to edit or improve this image (e.g., 'Change time to night', 'Add neon lights'). Return ONLY the 3 prompts as a JSON array of strings."
+        }
+      ]
+    },
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING }
+      }
+    }
+  });
+
+  const text = response.text || "[]";
+  try {
+    return JSON.parse(text);
+  } catch {
+    return ["Make it black and white", "Add a lens flare", "Change background to cyberpunk city"];
+  }
 };
 
 /**

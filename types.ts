@@ -17,9 +17,37 @@ export interface PromptEnhancementResult {
   tips: string[];
 }
 
-export type AppMode = 'analyze' | 'generate' | 'remix';
+export interface SearchResult {
+  summary: string;
+  sources: { title: string; uri: string }[];
+}
+
+export interface RemixHistoryItem {
+  image: string;
+  prompt: string;
+  timestamp: number;
+}
+
+export interface AdaptationResult {
+  analysis: string;
+  strategy: string;
+  suggestedPrompt: string;
+}
+
+export type AppMode = 'analyze' | 'product' | 'generate' | 'remix';
 
 export interface LoadingState {
   isLoading: boolean;
   message: string;
+}
+
+declare global {
+  interface AIStudio {
+    openSelectKey: () => Promise<void>;
+    hasSelectedApiKey: () => Promise<boolean>;
+  }
+
+  interface Window {
+    aistudio?: AIStudio;
+  }
 }
